@@ -1,5 +1,6 @@
 import base64
 import binascii
+import os
 from pydantic import BaseModel, Field
 from typing import Optional, Dict
 from fastapi import Form, HTTPException, Request
@@ -7,6 +8,28 @@ from fastapi import Form, HTTPException, Request
 # Server-side credential cache keyed by user email
 # More reliable than session cookies for SSE/EventSource requests
 _credentials_cache: Dict[str, dict] = {}
+# Used when AUTHENTICATION_REQUIRED is false (no Auth0 email on the request)
+LOCAL_CREDENTIALS_CACHE_KEY = "local_user"
+
+
+def _is_authentication_required() -> bool:
+    value = os.getenv("AUTHENTICATION_REQUIRED", "")
+    return str(value).strip().lower() in ("true", "1", "yes")
+
+
+def _credentials_from_env() -> Optional[dict]:
+    uri = os.getenv("NEO4J_URI") or None
+    user_name = os.getenv("NEO4J_USERNAME") or None
+    password = os.getenv("NEO4J_PASSWORD") or None
+    database = os.getenv("NEO4J_DATABASE") or None
+    if uri and user_name and password:
+        return {
+            "uri": uri,
+            "userName": user_name,
+            "password": password,
+            "database": database,
+        }
+    return None
 
 
 def _decode_password(password: Optional[str]) -> Optional[str]:
@@ -70,10 +93,11 @@ async def get_neo4j_credentials(
     token_email = getattr(request.state, "token_email", None)
     decoded_password = _decode_password(password)
 
-    # Store credentials in server-side cache keyed by email
-    # This allows SSE endpoints to retrieve credentials without relying on session cookies
-    if token_email:
-        _credentials_cache[token_email] = {
+    # Store credentials for GET/SSE endpoints. When auth is off there is no
+    # token email, so cache under a local key (and still cache when email exists).
+    if uri and userName and decoded_password:
+        cache_key = token_email or LOCAL_CREDENTIALS_CACHE_KEY
+        _credentials_cache[cache_key] = {
             "uri": uri,
             "userName": userName,
             "password": decoded_password,
@@ -110,22 +134,28 @@ async def get_neo4j_credentials_from_session(
     """
     # Extract email set by auth middleware
     token_email = getattr(request.state, "token_email", None)
-    
-    if not token_email:
+    auth_required = _is_authentication_required()
+
+    if auth_required and not token_email:
         raise HTTPException(
             status_code=401,
             detail="Authentication required. No user email found in token."
         )
-    
-    # Get credentials from server-side cache
-    cached_creds = _credentials_cache.get(token_email)
-    
+
+    cache_key = token_email or LOCAL_CREDENTIALS_CACHE_KEY
+    cached_creds = _credentials_cache.get(cache_key)
+
+    # Local/dev: fall back to NEO4J_* env vars if the in-memory cache is empty
+    # (e.g. after uvicorn reload).
+    if not cached_creds and not auth_required:
+        cached_creds = _credentials_from_env()
+
     if not cached_creds:
         raise HTTPException(
             status_code=401,
             detail="Neo4j credentials not found. Please connect to the database first via /connect or /upload endpoint."
         )
-    
+
     return Neo4jCredentials(
         uri=cached_creds.get("uri"),
         userName=cached_creds.get("userName"),
