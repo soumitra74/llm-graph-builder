@@ -3,13 +3,13 @@ import {
   DataGridComponents,
   Flex,
   IconButton,
-  ProgressBar,
   StatusIndicator,
   TextLink,
   Typography,
   useCopyToClipboard,
   Checkbox,
   useMediaQuery,
+  Tooltip,
 } from '@neo4j-ndl/react';
 import {
   forwardRef,
@@ -71,6 +71,13 @@ import { useAuth0 } from '@auth0/auth0-react';
 import React from 'react';
 
 let onlyfortheFirstRender = true;
+
+const getProcessingProgressTooltip = (progress?: number) => {
+  if (progress === undefined || Number.isNaN(Number(progress))) {
+    return 'Starting...';
+  }
+  return `${progress}% complete`;
+};
 
 const FileTable: ForwardRefRenderFunction<ChildRef, FileTableProps> = (props, ref) => {
   const { connectionStatus, setConnectionStatus, onInspect, onRetry, onChunkView } = props;
@@ -201,15 +208,25 @@ const FileTable: ForwardRefRenderFunction<ChildRef, FileTableProps> = (props, re
                   )}
               </div>
             );
-          } else if (info.getValue() === 'Processing' && info.row.original.processingProgress === undefined) {
+          } else {
+            const progress = info.row.original.processingProgress;
             return (
               <div className='cellClass flex! gap-1 items-center'>
-                <div>
-                  <StatusIndicator type={statusCheck(info.getValue())} />
-                </div>
-                <div>
-                  <i>Processing</i>
-                </div>
+                <Tooltip type='simple' placement='top'>
+                  <Tooltip.Trigger>
+                    <div className='flex! gap-1 items-center cursor-help'>
+                      <div>
+                        <StatusIndicator type={statusCheck(info.getValue())} />
+                      </div>
+                      <div>
+                        <i>Processing</i>
+                      </div>
+                    </div>
+                  </Tooltip.Trigger>
+                  <Tooltip.Content style={{ whiteSpace: 'nowrap' }}>
+                    {getProcessingProgressTooltip(progress)}
+                  </Tooltip.Content>
+                </Tooltip>
                 <div className='mx-1'>
                   <IconButton
                     size='medium'
@@ -232,49 +249,7 @@ const FileTable: ForwardRefRenderFunction<ChildRef, FileTableProps> = (props, re
                 </div>
               </div>
             );
-          } else if (
-            info.getValue() === 'Processing' &&
-            info.row.original.processingProgress != undefined &&
-            info.row.original.processingProgress < 100
-          ) {
-            return (
-              <div className='cellClass'>
-                <ProgressBar
-                  heading='Processing '
-                  size='small'
-                  value={info.row.original.processingProgress}
-                ></ProgressBar>
-                <div className='mx-1'>
-                  <IconButton
-                    size='medium'
-                    htmlAttributes={{
-                      title: 'cancel the processing job',
-                    }}
-                    ariaLabel='cancel job button'
-                    isClean={true}
-                    isDisabled={info.row.original.processingStatus}
-                    onClick={() => {
-                      cancelHandler(
-                        info.row.original.name as string,
-                        info.row.original.id as string,
-                        info.row.original.fileSource as string
-                      );
-                    }}
-                  >
-                    <XMarkIconOutline />
-                  </IconButton>
-                </div>
-              </div>
-            );
           }
-          return (
-            <div className='cellClass flex! gap-1'>
-              <div>
-                <StatusIndicator type={statusCheck(info.getValue())} />
-              </div>
-              <div>{info.getValue()}</div>
-            </div>
-          );
         },
         header: () => <span>Status</span>,
         footer: (info) => info.column.id,
