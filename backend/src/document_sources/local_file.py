@@ -64,6 +64,63 @@ def load_document_content(file_path):
     loader = UnstructuredFileLoader(file_path, mode="elements", autodetect_encoding=True)
     return loader, encoding_flag
 
+def _page_text_length(pages):
+    return sum(len((page.page_content or "").strip()) for page in pages)
+
+
+def ocr_pdf_pages(file_path):
+    """
+    Rasterize PDF pages and OCR them. Used for print-to-PDF files whose text is
+    outlined as drawings, so PyMuPDF extracts no characters.
+    """
+    try:
+        from rapidocr_onnxruntime import RapidOCR
+    except ImportError as exc:
+        raise Exception(
+            "PDF has no extractable text (print-to-PDF / outlined fonts). "
+            "Install rapidocr-onnxruntime to OCR pages."
+        ) from exc
+
+    import fitz
+    import numpy as np
+
+    engine = RapidOCR()
+    pdf = fitz.open(file_path)
+    pages = []
+    try:
+        for page_index, page in enumerate(pdf):
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+            if pix.n == 1:
+                image = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w)
+            else:
+                image = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, pix.n)
+                if pix.n == 4:
+                    image = image[:, :, :3]
+            result, _elapsed = engine(image)
+            lines = []
+            if result:
+                for item in result:
+                    if isinstance(item, (list, tuple)) and len(item) >= 2:
+                        lines.append(str(item[1]))
+            text = "\n".join(lines).strip()
+            logging.info(
+                "OCR page %s/%s produced %s characters for %s",
+                page_index + 1,
+                pdf.page_count,
+                len(text),
+                Path(file_path).name,
+            )
+            pages.append(
+                Document(
+                    page_content=text,
+                    metadata={"source": str(file_path), "file_path": str(file_path), "page": page_index},
+                )
+            )
+    finally:
+        pdf.close()
+    return pages
+
+
 def get_documents_from_file_by_path(file_path, file_name):
     """
     Loads documents from a file by its path and returns file name, pages, and extension.
@@ -91,6 +148,14 @@ def get_documents_from_file_by_path(file_path, file_name):
         else:
             unstructured_pages = loader.load()
             pages = get_pages_with_page_numbers(unstructured_pages)
+        if file_extension == ".pdf" and _page_text_length(pages) == 0:
+            logging.warning(
+                "No extractable text in %s; falling back to OCR for print-to-PDF content",
+                file_name,
+            )
+            pages = ocr_pdf_pages(file_path)
+            if _page_text_length(pages) == 0:
+                raise Exception(f"OCR produced no text for {file_name}")
     except Exception as exc:
         raise Exception(f'Error while reading the file content or metadata, {exc}')
     return file_name, pages, file_extension

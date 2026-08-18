@@ -465,6 +465,11 @@ async def processing_source(credentials, params, pages, merged_file_path=None, i
   create_chunk_vector_index(graph, params.embedding_provider,params.embedding_model)
   start_get_chunkId_chunkDoc_list = time.time()
   total_chunks, chunkId_chunkDoc_list = get_chunkId_chunkDoc_list(graph, params.file_name, pages, params.token_chunk_size, params.chunk_overlap, params.retry_condition, credentials.email)
+  if total_chunks == 0:
+    raise LLMGraphBuilderException(
+      f"No extractable text chunks were created for {params.file_name}. "
+      "The file may be a scanned or print-to-PDF document with no selectable text."
+    )
   end_get_chunkId_chunkDoc_list = time.time()
   elapsed_get_chunkId_chunkDoc_list = end_get_chunkId_chunkDoc_list - start_get_chunkId_chunkDoc_list
   logging.info(f'Time taken to create list chunkids with chunk document: {elapsed_get_chunkId_chunkDoc_list:.2f} seconds')
