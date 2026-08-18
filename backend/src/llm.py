@@ -117,8 +117,12 @@ def get_llm(model: str):
             )
 
         elif "OLLAMA" in model:
-            model_name, base_url = env_value.split(",")
-            llm = ChatOllama(base_url=base_url, model=model_name,callbacks=callback_manager)
+            model_name, base_url = [part.strip().strip('"').strip("'") for part in env_value.split(",", 1)]
+            # ChatOllama talks to /api/chat. A trailing /v1 is the OpenAI-compat root and 404s.
+            base_url = base_url.rstrip("/")
+            if base_url.endswith("/v1"):
+                base_url = base_url[:-3]
+            llm = ChatOllama(base_url=base_url, model=model_name, callbacks=callback_manager)
 
         elif "DIFFBOT" in model:
             #model_name = "diffbot"
